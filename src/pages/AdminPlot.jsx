@@ -39,39 +39,35 @@ const AdminPlot = () => {
   // Add undo history state
   const [pointsHistory, setPointsHistory] = useState([]);
 
+  // Add new state for loading
+  const [isLoading, setIsLoading] = useState(false);
+
   const isMobile = useMediaQuery({ query: "(max-width: 768px)" });
 
   // Canvas size setup
-  useEffect(() => {
-    console.log("Initializing canvas size");
-    const updateCanvasSize = () => {
-      const container = containerRef.current;
-      const canvas = canvasRef.current;
-      const containerHeight = container.clientHeight;
-      const containerWidth = container.clientWidth;
+  const updateCanvasSize = () => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    const containerHeight = container.clientHeight;
+    const containerWidth = container.clientWidth;
 
-      const scale =
-        Math.max(
-          MIN_VIDEO_WIDTH / containerWidth,
-          MIN_VIDEO_HEIGHT / containerHeight
-        ) * 1.2;
+    const scale =
+      Math.max(
+        MIN_VIDEO_WIDTH / containerWidth,
+        MIN_VIDEO_HEIGHT / containerHeight
+      ) * 1.2;
 
-      const targetWidth = containerWidth * scale;
-      const targetHeight = (targetWidth * 9) / 16;
+    const targetWidth = containerWidth * scale;
+    const targetHeight = (targetWidth * 9) / 16;
 
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
-      setImgSize({ width: targetWidth, height: targetHeight });
-      console.log("Canvas size updated:", {
-        width: targetWidth,
-        height: targetHeight,
-      });
-    };
-
-    updateCanvasSize();
-    window.addEventListener("resize", updateCanvasSize);
-    return () => window.removeEventListener("resize", updateCanvasSize);
-  }, [isMobile]);
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    setImgSize({ width: targetWidth, height: targetHeight });
+    console.log("Canvas size updated:", {
+      width: targetWidth,
+      height: targetHeight,
+    });
+  };
 
   // Video rendering
   useEffect(() => {
@@ -81,15 +77,14 @@ const AdminPlot = () => {
     const video = videoRef.current;
     const image = imageRef.current;
 
+    let animationFrame;
+
     const render = () => {
-      if (
-        mediaType === "video" &&
-        video.readyState >= video.HAVE_CURRENT_DATA
-      ) {
+      if (mediaType === "video" && video.readyState >= video.HAVE_CURRENT_DATA) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         drawAreas(ctx);
         drawCurrentArea(ctx);
-        requestAnimationFrame(render);
+        animationFrame = requestAnimationFrame(render);
       } else if (mediaType === "image" && image.complete) {
         ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
         drawAreas(ctx);
@@ -98,11 +93,16 @@ const AdminPlot = () => {
     };
 
     if (mediaType === "video") {
-      video.play();
+      video.play().catch(error => {
+        console.error("Error playing video:", error);
+      });
     }
     render();
 
     return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
       if (mediaType === "video") {
         video.pause();
       }
@@ -309,6 +309,7 @@ const AdminPlot = () => {
     const file = event.target.files[0];
     if (!file) return;
 
+    setIsLoading(true);
     const fileType = file.type.split("/")[0];
     const url = URL.createObjectURL(file);
 
@@ -319,16 +320,34 @@ const AdminPlot = () => {
       setMediaUrl(url);
       if (videoRef.current) {
         videoRef.current.src = url;
+        videoRef.current.onloadeddata = () => {
+          console.log("Video loaded");
+          updateCanvasSize();
+          setIsLoading(false);
+        };
+        videoRef.current.onerror = () => {
+          console.error("Error loading video");
+          setIsLoading(false);
+          alert("Error loading video");
+        };
       }
     } else if (fileType === "image") {
       setMediaType("image");
-      setMediaUrl(url);
       const img = new Image();
       img.src = url;
       img.onload = () => {
+        console.log("Image loaded");
+        setMediaUrl(url);
         if (imageRef.current) {
           imageRef.current.src = url;
+          updateCanvasSize();
         }
+        setIsLoading(false);
+      };
+      img.onerror = () => {
+        console.error("Error loading image");
+        setIsLoading(false);
+        alert("Error loading image");
       };
     }
   };
@@ -341,6 +360,13 @@ const AdminPlot = () => {
       console.log("Undoing last point");
     }
   };
+
+  // Add a new useEffect to handle media type changes
+  useEffect(() => {
+    if (mediaType) {
+      updateCanvasSize();
+    }
+  }, [mediaType]);
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -390,6 +416,16 @@ const AdminPlot = () => {
         ref={containerRef}
         className="relative w-full h-[calc(100vh-100px)] overflow-auto border-2 border-gray-300 rounded"
       >
+        {/* Add loading overlay */}
+        {isLoading && (
+          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="text-white text-center">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white mb-2"></div>
+              <p>Loading media...</p>
+            </div>
+          </div>
+        )}
+
         <canvas
           ref={canvasRef}
           onClick={handleCanvasClick}
@@ -403,12 +439,24 @@ const AdminPlot = () => {
           muted
           playsInline
           style={{ display: "none" }}
+          onLoadedData={() => {
+            console.log("Video element loaded data");
+          }}
+          onError={(e) => {
+            console.error("Video error:", e);
+          }}
         />
         <img
           ref={imageRef}
           src={mediaType === "image" ? mediaUrl : ""}
           alt="Plot area"
           style={{ display: "none" }}
+          onLoad={() => {
+            console.log("Image element loaded");
+          }}
+          onError={(e) => {
+            console.error("Image error:", e);
+          }}
         />
 
         <div className="absolute top-4 right-4 bg-black bg-opacity-50 text-white p-2 rounded">
