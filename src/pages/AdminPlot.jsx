@@ -19,10 +19,13 @@ const AdminPlot = () => {
   const [currentArea, setCurrentArea] = useState({
     points: [],
     details: {
-      name: "",
-      number: "",
-      rent: "",
-      availability: "",
+      plotNo: "",
+      amount: "",
+      totalSqft: "",
+      cents: "",
+      heightFt: "",
+      widthFt: "",
+      availability: "available",
     },
     videoTimestamp: 0,
   });
@@ -42,7 +45,38 @@ const AdminPlot = () => {
   // Add new state for loading
   const [isLoading, setIsLoading] = useState(false);
 
+  // Add new state for availability
+  const [currentAvailability, setCurrentAvailability] = useState("available");
+
+  // Add new state for edit mode
+  const [editingArea, setEditingArea] = useState(null);
+
   const isMobile = useMediaQuery({ query: "(max-width: 768px)" });
+
+  // Add random data generator function
+  const generateRandomPlotData = () => {
+    const plotNumbers = ["A", "B", "C", "D", "E", "F"];
+    const randomPlotNo = `Plot ${
+      plotNumbers[Math.floor(Math.random() * plotNumbers.length)]
+    }${Math.floor(Math.random() * 100)}`;
+    const randomAmount = `${Math.floor(Math.random() * 900000) + 100000}`; // Random amount between 100,000 and 1,000,000
+    const randomSqft = `${Math.floor(Math.random() * 2000) + 500}`; // Random sqft between 500 and 2500
+    const randomCents = `${(Math.random() * 10).toFixed(2)}`; // Random cents between 0 and 10
+    const randomHeight = `${Math.floor(Math.random() * 50) + 20}`; // Random height between 20 and 70 ft
+    const randomWidth = `${Math.floor(Math.random() * 40) + 15}`; // Random width between 15 and 55 ft
+    const randomAvailability =
+      Math.random() > 0.3 ? "available" : "unavailable"; // 70% chance of being available
+
+    return {
+      plotNo: randomPlotNo,
+      amount: randomAmount,
+      totalSqft: randomSqft,
+      cents: randomCents,
+      heightFt: randomHeight,
+      widthFt: randomWidth,
+      availability: randomAvailability,
+    };
+  };
 
   // Canvas size setup
   const updateCanvasSize = () => {
@@ -80,7 +114,10 @@ const AdminPlot = () => {
     let animationFrame;
 
     const render = () => {
-      if (mediaType === "video" && video.readyState >= video.HAVE_CURRENT_DATA) {
+      if (
+        mediaType === "video" &&
+        video.readyState >= video.HAVE_CURRENT_DATA
+      ) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         drawAreas(ctx);
         drawCurrentArea(ctx);
@@ -93,7 +130,7 @@ const AdminPlot = () => {
     };
 
     if (mediaType === "video") {
-      video.play().catch(error => {
+      video.play().catch((error) => {
         console.error("Error playing video:", error);
       });
     }
@@ -122,9 +159,14 @@ const AdminPlot = () => {
       scaledPoints.forEach((point) => ctx.lineTo(point.x, point.y));
       ctx.closePath();
 
-      ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
+      // Set fill color based on availability
+      ctx.fillStyle =
+        area.details.availability === "available"
+          ? "rgba(0, 255, 0, 0.3)"
+          : "rgba(255, 0, 0, 0.3)";
       ctx.fill();
-      ctx.strokeStyle = "green";
+      ctx.strokeStyle =
+        area.details.availability === "available" ? "green" : "red";
       ctx.lineWidth = 2;
       ctx.stroke();
 
@@ -199,7 +241,7 @@ const AdminPlot = () => {
           Math.pow(x * canvas.width - scaledX, 2) +
             Math.pow(y * canvas.height - scaledY, 2)
         );
-        return distance < 10; // 10px radius for hover detection
+        return distance < 10;
       });
     };
 
@@ -208,10 +250,9 @@ const AdminPlot = () => {
     setHoveredPoint(hoveredPointIndex);
     setIsPointHovered(hoveredPointIndex === 0 && currentPoints.length > 2);
 
-    // Check completed areas
+    // Check if mouse is inside any area
     const hoveredAreaIndex = areas.findIndex((area) => {
-      const pointIndex = checkPointProximity(area.points);
-      return pointIndex !== -1;
+      return isPointInPolygon({ x, y }, area.points);
     });
 
     if (hoveredAreaIndex !== -1) {
@@ -230,10 +271,38 @@ const AdminPlot = () => {
 
     console.log("Canvas clicked:", { x, y });
 
+    // Check if clicking inside an existing area
+    const clickedAreaIndex = areas.findIndex((area) =>
+      isPointInPolygon({ x, y }, area.points)
+    );
+
+    if (clickedAreaIndex !== -1) {
+      // Open edit dialog for clicked area
+      const areaToEdit = areas[clickedAreaIndex];
+      setEditingArea(areaToEdit);
+      setCurrentArea(areaToEdit); // Set the current area to the one being edited
+      setShowForm(true);
+      return;
+    }
+
     // If hovering over first point and we have enough points, complete the area
     if (isPointHovered && currentPoints.length > 2) {
+      // Check if new area overlaps with existing areas
+      if (checkForOverlap([...currentPoints, currentPoints[0]])) {
+        alert("Areas cannot overlap. Please choose a different location.");
+        return;
+      }
       handleCompleteArea();
       return;
+    }
+
+    // Check if new point would create overlap
+    if (currentPoints.length > 0) {
+      const newPoints = [...currentPoints, { x, y }];
+      if (checkForOverlap(newPoints)) {
+        alert("Areas cannot overlap. Please choose a different location.");
+        return;
+      }
     }
 
     setCurrentPoints((prev) => [...prev, { x, y }]);
@@ -247,30 +316,43 @@ const AdminPlot = () => {
     }
 
     console.log("Completing area with points:", currentPoints);
+    const randomDetails = generateRandomPlotData();
     setCurrentArea({
       ...currentArea,
       points: currentPoints,
-      videoTimestamp: videoRef.current.currentTime,
+      details: randomDetails,
+      videoTimestamp: videoRef.current?.currentTime || 0,
     });
     setShowForm(true);
   };
 
   const handleSaveArea = (e) => {
     e.preventDefault();
-    console.log("Saving area:", currentArea);
+    console.log("Saving area:", editingArea ? "edit mode" : "new mode");
 
-    setAreas((prev) => [...prev, currentArea]);
+    if (editingArea) {
+      setAreas((prev) =>
+        prev.map((area) => (area === editingArea ? { ...currentArea } : area))
+      );
+    } else {
+      setAreas((prev) => [...prev, currentArea]);
+    }
+
     setCurrentPoints([]);
     setCurrentArea({
       points: [],
       details: {
-        name: "",
-        number: "",
-        rent: "",
-        availability: "",
+        plotNo: "",
+        amount: "",
+        totalSqft: "",
+        cents: "",
+        heightFt: "",
+        widthFt: "",
+        availability: "available",
       },
       videoTimestamp: 0,
     });
+    setEditingArea(null);
     setShowForm(false);
   };
 
@@ -292,7 +374,12 @@ const AdminPlot = () => {
   };
 
   const handleCopyAreas = () => {
-    const areasString = JSON.stringify(areas, null, 2);
+    const exportData = {
+      mediaType: mediaType || "video", // default to video if not set
+      areas: areas,
+    };
+
+    const areasString = JSON.stringify(exportData, null, 2);
     navigator.clipboard.writeText(areasString).then(
       () => {
         console.log("Areas copied to clipboard");
@@ -367,6 +454,80 @@ const AdminPlot = () => {
       updateCanvasSize();
     }
   }, [mediaType]);
+
+  // Add function to check for overlapping areas
+  const checkForOverlap = (newPoints) => {
+    if (newPoints.length < 3) return false;
+
+    // Create edges for the new polygon
+    const newEdges = newPoints.map((point, i) => ({
+      start: point,
+      end: newPoints[(i + 1) % newPoints.length],
+    }));
+
+    // Check against each existing area
+    return areas.some((area) => {
+      const areaEdges = area.points.map((point, i) => ({
+        start: point,
+        end: area.points[(i + 1) % area.points.length],
+      }));
+
+      // Check if any edges intersect
+      return newEdges.some((edge1) =>
+        areaEdges.some((edge2) =>
+          doLinesIntersect(edge1.start, edge1.end, edge2.start, edge2.end)
+        )
+      );
+    });
+  };
+
+  // Add helper function to check if lines intersect
+  const doLinesIntersect = (p1, p2, p3, p4) => {
+    const denominator =
+      (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
+    if (denominator === 0) return false;
+
+    const ua =
+      ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) /
+      denominator;
+    const ub =
+      ((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) /
+      denominator;
+
+    return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
+  };
+
+  // Add function to handle area deletion
+  const handleDeleteArea = () => {
+    if (!editingArea) return;
+
+    const confirmDelete = window.confirm(
+      "Are you sure you want to delete this area?"
+    );
+    if (confirmDelete) {
+      setAreas((prev) => prev.filter((area) => area !== editingArea));
+      setEditingArea(null);
+      setShowForm(false);
+    }
+  };
+
+  // Add this function near your other helper functions
+  const isPointInPolygon = (point, vertices) => {
+    let inside = false;
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+      const xi = vertices[i].x,
+        yi = vertices[i].y;
+      const xj = vertices[j].x,
+        yj = vertices[j].y;
+
+      const intersect =
+        yi > point.y !== yj > point.y &&
+        point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -466,7 +627,7 @@ const AdminPlot = () => {
         {/* Hover tooltip for completed areas */}
         {hoveredArea && (
           <div
-            className="fixed bg-white p-3 rounded shadow-lg z-50"
+            className="fixed bg-white/90 backdrop-blur-sm p-4 rounded-lg shadow-lg z-50 border border-gray-200"
             style={{
               left: popupPosition.x + "px",
               top: popupPosition.y + "px",
@@ -474,18 +635,38 @@ const AdminPlot = () => {
               pointerEvents: "none",
             }}
           >
+            <h3 className="font-semibold mb-2">Plot Details</h3>
             <p>
-              <strong>Name:</strong> {hoveredArea.details.name || "N/A"}
+              <strong>Plot No:</strong> {hoveredArea.details.plotNo || "N/A"}
             </p>
             <p>
-              <strong>Number:</strong> {hoveredArea.details.number || "N/A"}
+              <strong>Amount:</strong> {hoveredArea.details.amount || "N/A"}
             </p>
             <p>
-              <strong>Rent:</strong> {hoveredArea.details.rent || "N/A"}
+              <strong>Total Sqft:</strong>{" "}
+              {hoveredArea.details.totalSqft || "N/A"}
             </p>
             <p>
-              <strong>Availability:</strong>{" "}
-              {hoveredArea.details.availability || "N/A"}
+              <strong>Cents:</strong> {hoveredArea.details.cents || "N/A"}
+            </p>
+            <p>
+              <strong>Dimensions:</strong>{" "}
+              {hoveredArea.details.widthFt || "N/A"} x{" "}
+              {hoveredArea.details.heightFt || "N/A"} ft
+            </p>
+            <p>
+              <strong>Status:</strong>{" "}
+              <span
+                className={
+                  hoveredArea.details.availability === "available"
+                    ? "text-green-600"
+                    : "text-red-600"
+                }
+              >
+                {hoveredArea.details.availability === "available"
+                  ? "Available"
+                  : "Unavailable"}
+              </span>
             </p>
           </div>
         )}
@@ -503,86 +684,206 @@ const AdminPlot = () => {
       </div>
 
       {showForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-          <div className="bg-white p-6 rounded-lg w-96">
-            <h2 className="text-xl font-bold mb-4">Area Details</h2>
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div
+            className="absolute inset-0 backdrop-blur-sm bg-black/30"
+            onClick={() => {
+              setShowForm(false);
+              setEditingArea(null);
+            }}
+          />
+          <div className="relative bg-white/90 p-8 rounded-xl shadow-2xl w-[500px] transform transition-all duration-300 ease-out scale-100 opacity-100 animate-modal-enter">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">
+              {editingArea ? "Edit Area" : "New Area"}
+            </h2>
             <form onSubmit={handleSaveArea} className="space-y-4">
               <div>
-                <label className="block mb-1">Name:</label>
+                <label className="block mb-2 text-gray-700">Plot No:</label>
                 <input
                   type="text"
-                  value={currentArea.details.name}
-                  onChange={(e) =>
-                    setCurrentArea({
-                      ...currentArea,
-                      details: { ...currentArea.details, name: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2 rounded"
-                />
-              </div>
-              <div>
-                <label className="block mb-1">Number:</label>
-                <input
-                  type="text"
-                  value={currentArea.details.number}
+                  value={currentArea.details.plotNo}
                   onChange={(e) =>
                     setCurrentArea({
                       ...currentArea,
                       details: {
                         ...currentArea.details,
-                        number: e.target.value,
+                        plotNo: e.target.value,
                       },
                     })
                   }
-                  className="w-full border p-2 rounded"
+                  className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none"
                 />
               </div>
-              <div>
-                <label className="block mb-1">Rent:</label>
-                <input
-                  type="text"
-                  value={currentArea.details.rent}
-                  onChange={(e) =>
-                    setCurrentArea({
-                      ...currentArea,
-                      details: { ...currentArea.details, rent: e.target.value },
-                    })
-                  }
-                  className="w-full border p-2 rounded"
-                />
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block mb-2 text-gray-700">Amount:</label>
+                  <input
+                    type="text"
+                    value={currentArea.details.amount}
+                    onChange={(e) =>
+                      setCurrentArea({
+                        ...currentArea,
+                        details: {
+                          ...currentArea.details,
+                          amount: e.target.value,
+                        },
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-2 text-gray-700">
+                    Total Sqft:
+                  </label>
+                  <input
+                    type="text"
+                    value={currentArea.details.totalSqft}
+                    onChange={(e) =>
+                      setCurrentArea({
+                        ...currentArea,
+                        details: {
+                          ...currentArea.details,
+                          totalSqft: e.target.value,
+                        },
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block mb-1">Availability:</label>
-                <input
-                  type="text"
-                  value={currentArea.details.availability}
-                  onChange={(e) =>
-                    setCurrentArea({
-                      ...currentArea,
-                      details: {
-                        ...currentArea.details,
-                        availability: e.target.value,
-                      },
-                    })
-                  }
-                  className="w-full border p-2 rounded"
-                />
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block mb-2 text-gray-700">Cents:</label>
+                  <input
+                    type="text"
+                    value={currentArea.details.cents}
+                    onChange={(e) =>
+                      setCurrentArea({
+                        ...currentArea,
+                        details: {
+                          ...currentArea.details,
+                          cents: e.target.value,
+                        },
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-2 text-gray-700">
+                    Height (ft):
+                  </label>
+                  <input
+                    type="text"
+                    value={currentArea.details.heightFt}
+                    onChange={(e) =>
+                      setCurrentArea({
+                        ...currentArea,
+                        details: {
+                          ...currentArea.details,
+                          heightFt: e.target.value,
+                        },
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-2 text-gray-700">
+                    Width (ft):
+                  </label>
+                  <input
+                    type="text"
+                    value={currentArea.details.widthFt}
+                    onChange={(e) =>
+                      setCurrentArea({
+                        ...currentArea,
+                        details: {
+                          ...currentArea.details,
+                          widthFt: e.target.value,
+                        },
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                </div>
               </div>
-              <div className="flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                  className="bg-gray-500 text-white px-4 py-2 rounded"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-blue-500 text-white px-4 py-2 rounded"
-                >
-                  Save Area
-                </button>
+
+              <div className="space-y-2">
+                <label className="block text-gray-700">Availability:</label>
+                <div className="flex space-x-4">
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      value="available"
+                      checked={currentArea.details.availability === "available"}
+                      onChange={(e) =>
+                        setCurrentArea({
+                          ...currentArea,
+                          details: {
+                            ...currentArea.details,
+                            availability: e.target.value,
+                          },
+                        })
+                      }
+                      className="form-radio text-green-500"
+                    />
+                    <span className="ml-2 text-gray-700">Available</span>
+                  </label>
+                  <label className="inline-flex items-center">
+                    <input
+                      type="radio"
+                      value="unavailable"
+                      checked={
+                        currentArea.details.availability === "unavailable"
+                      }
+                      onChange={(e) =>
+                        setCurrentArea({
+                          ...currentArea,
+                          details: {
+                            ...currentArea.details,
+                            availability: e.target.value,
+                          },
+                        })
+                      }
+                      className="form-radio text-red-500"
+                    />
+                    <span className="ml-2 text-gray-700">Unavailable</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-between space-x-3 mt-6">
+                {editingArea && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteArea}
+                    className="px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors"
+                  >
+                    Delete Area
+                  </button>
+                )}
+                <div className="flex space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForm(false);
+                      setEditingArea(null);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+                  >
+                    {editingArea ? "Update" : "Save"} Area
+                  </button>
+                </div>
               </div>
             </form>
           </div>
